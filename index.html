@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>3D Valley</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #0b0e14;
+      }
+      canvas {
+        display: block;
+      }
+      #overlay {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 18px;
+        background: rgba(8, 11, 18, 0.78);
+        color: #eef2f7;
+        font-family: -apple-system, system-ui, sans-serif;
+        cursor: pointer;
+        user-select: none;
+        z-index: 10;
+        text-align: center;
+      }
+      #overlay h1 {
+        margin: 0;
+        font-size: 30px;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+      }
+      #overlay.hidden {
+        display: none;
+      }
+      #status {
+        margin: 0;
+        font-size: 14px;
+        color: #9fb0c6;
+      }
+      #status.error {
+        color: #ff9d8a;
+      }
+      .keys {
+        display: grid;
+        grid-template-columns: auto auto;
+        gap: 6px 16px;
+        font-size: 14px;
+        color: #c9d4e3;
+        text-align: left;
+      }
+      .keys b {
+        color: #fff;
+        font-weight: 600;
+        text-align: right;
+        font-family: ui-monospace, Menlo, monospace;
+        font-size: 13px;
+      }
+      kbd {
+        display: inline-block;
+        min-width: 14px;
+        text-align: center;
+        background: #1d2735;
+        border: 1px solid #3c4b61;
+        border-bottom-width: 2px;
+        border-radius: 5px;
+        padding: 1px 6px;
+        font:
+          12px ui-monospace,
+          Menlo,
+          monospace;
+      }
+      #start {
+        margin-top: 6px;
+        font-size: 16px;
+        color: #fff;
+        background: #2563eb;
+        padding: 11px 30px;
+        border-radius: 999px;
+        transition:
+          transform 0.1s,
+          opacity 0.2s;
+      }
+      #start.disabled {
+        background: #2a3648;
+        color: #8b99ad;
+      }
+      #overlay:hover #start:not(.disabled) {
+        transform: scale(1.04);
+      }
+      #hud {
+        position: fixed;
+        left: 14px;
+        bottom: 12px;
+        z-index: 5;
+        color: #e8eef6;
+        font:
+          12px/1.6 ui-monospace,
+          Menlo,
+          monospace;
+        background: rgba(10, 14, 20, 0.5);
+        padding: 6px 10px;
+        border-radius: 8px;
+        pointer-events: none;
+        white-space: pre;
+      }
+      #hint {
+        position: fixed;
+        bottom: 12px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 5;
+        color: #dfe7f1;
+        font:
+          12px system-ui,
+          sans-serif;
+        background: rgba(10, 14, 20, 0.5);
+        padding: 6px 14px;
+        border-radius: 999px;
+        pointer-events: none;
+        white-space: nowrap;
+      }
+      #toast {
+        position: fixed;
+        top: 18px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 6;
+        color: #fff;
+        font:
+          14px system-ui,
+          sans-serif;
+        background: rgba(10, 14, 20, 0.7);
+        padding: 9px 20px;
+        border-radius: 999px;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.35s;
+        white-space: nowrap;
+      }
+      #toast.show {
+        opacity: 1;
+      }
+      #attr {
+        position: fixed;
+        right: 10px;
+        bottom: 8px;
+        z-index: 5;
+        color: rgba(232, 238, 246, 0.5);
+        font:
+          10px system-ui,
+          sans-serif;
+        pointer-events: none;
+      }
+      .playing #hud,
+      .playing #hint {
+        display: block;
+      }
+      #hud,
+      #hint {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="overlay">
+      <h1>3D Valley</h1>
+      <p id="status">Loading terrain…</p>
+      <div class="keys">
+        <b>Mouse</b><span>look around</span>
+        <b><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></b
+        ><span>move (arrow keys work too)</span>
+        <b><kbd>Space</kbd> / <kbd>C</kbd></b
+        ><span>up / down while flying</span> <b><kbd>Shift</kbd></b
+        ><span>go faster</span> <b><kbd>Scroll</kbd></b
+        ><span>change fly speed</span> <b><kbd>F</kbd></b
+        ><span>switch between flying and walking</span>
+        <b><kbd>L</kbd> / <kbd>1</kbd>–<kbd>5</kbd></b
+        ><span>time of day (dawn → night)</span> <b><kbd>R</kbd></b
+        ><span>weather (clear → clouds → rain → snow)</span> <b><kbd>M</kbd></b
+        ><span>sound on / off</span> <b><kbd>Esc</kbd></b
+        ><span>back to this menu</span>
+      </div>
+      <div id="start" class="disabled">Loading…</div>
+    </div>
+    <div id="hud"></div>
+    <div id="hint"></div>
+    <div id="toast"></div>
+    <div id="attr">
+      Elevation: Mapzen/AWS Terrain Tiles · Imagery: Esri World Imagery · Roads
+      &amp; buildings: © OpenStreetMap
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
