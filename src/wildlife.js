@@ -43,8 +43,16 @@ export class Wildlife {
 
   makeBirds() {
     const flock = [];
-    for (const spot of SOAR_SPOTS) {
+    const activeSpots = SOAR_SPOTS.filter(spot => {
       const c = this.terrain.lonLatToWorld(spot.lon, spot.lat);
+      return Math.abs(c.x) < this.terrain.halfW && Math.abs(c.z) < this.terrain.halfH;
+    });
+    if (activeSpots.length === 0) {
+      activeSpots.push({ lon: undefined, lat: undefined, worldX: 0, worldZ: 0, agl: 300, n: 6 });
+    }
+
+    for (const spot of activeSpots) {
+      const c = spot.lon !== undefined ? this.terrain.lonLatToWorld(spot.lon, spot.lat) : new THREE.Vector3(spot.worldX, 0, spot.worldZ);
       const baseY = this.terrain.heightAt(c.x, c.z) + spot.agl;
       for (let i = 0; i < spot.n; i++) {
         flock.push({
@@ -88,8 +96,16 @@ export class Wildlife {
 
   makeDeer() {
     const herd = [];
-    for (const m of MEADOWS) {
+    const activeMeadows = MEADOWS.filter(m => {
       const c = this.terrain.lonLatToWorld(m.lon, m.lat);
+      return Math.abs(c.x) < this.terrain.halfW && Math.abs(c.z) < this.terrain.halfH;
+    });
+    if (activeMeadows.length === 0) {
+      activeMeadows.push({ lon: undefined, lat: undefined, worldX: 0, worldZ: 0, n: 5 });
+    }
+
+    for (const m of activeMeadows) {
+      const c = m.lon !== undefined ? this.terrain.lonLatToWorld(m.lon, m.lat) : new THREE.Vector3(m.worldX, 0, m.worldZ);
       let placed = 0;
       for (let tries = 0; tries < 60 && placed < m.n; tries++) {
         const a = Math.random() * Math.PI * 2;

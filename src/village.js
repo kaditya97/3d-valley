@@ -31,9 +31,13 @@ export class Village {
 
   async load() {
     let data;
-    try {
-      data = await fetch('data/osm.json').then((r) => (r.ok ? r.json() : null));
-    } catch { /* offline build without the OSM bake */ }
+    if (this.terrain.customSceneData && this.terrain.customSceneData.osm) {
+      data = this.terrain.customSceneData.osm;
+    } else {
+      try {
+        data = await fetch('data/osm.json').then((r) => (r.ok ? r.json() : null));
+      } catch { /* offline build without the OSM bake */ }
+    }
     if (!data) return;
     this.buildRoads(data.roads);
     this.buildBuildings(data.buildings);

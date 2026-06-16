@@ -26,6 +26,10 @@ export class Waterfalls {
     this.mistTexture = makeMistTexture();
 
     for (const def of FALLS) {
+      const top = this.terrain.lonLatToWorld(def.top[0], def.top[1]);
+      if (Math.abs(top.x) >= this.terrain.halfW || Math.abs(top.z) >= this.terrain.halfH) {
+        continue;
+      }
       const fall = this.buildFall(def);
       this.falls.push(fall);
       this.group.add(fall.mesh, fall.mist);

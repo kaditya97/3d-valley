@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { attachAtmo } from './atmosphere.js';
+import { db } from './db.js';
 
 // Loads the pre-built Yosemite dataset (see tools/fetch-terrain.mjs) and
 // builds chunked terrain meshes in a local metric frame:
@@ -20,18 +21,31 @@ export class Terrain {
     this.detailTexture = makeDetailTexture();
   }
 
-  static async load(onProgress) {
-    const [manifest, heightsBuf, forest] = await Promise.all([
-      fetch('data/manifest.json').then((r) => r.json()),
-      fetch('data/heights.bin').then((r) => r.arrayBuffer()),
-      loadForestMask(),
-    ]);
+  static async load(onProgress, sceneId) {
+    let manifest, heightsBuf, forest, customSceneData = null;
+
+    if (sceneId && sceneId !== 'yosemite') {
+      customSceneData = await db.getScene(sceneId);
+      if (!customSceneData) throw new Error('Scene not found in database');
+      manifest = customSceneData.manifest;
+      heightsBuf = customSceneData.heights;
+      forest = await decodeForestMask(customSceneData.forest);
+    } else {
+      const forestBlob = await fetch('data/forest.png').then((r) => r.blob());
+      [manifest, heightsBuf, forest] = await Promise.all([
+        fetch('data/manifest.json').then((r) => r.json()),
+        fetch('data/heights.bin').then((r) => r.arrayBuffer()),
+        decodeForestMask(forestBlob),
+      ]);
+    }
+
     const enc = new Uint16Array(heightsBuf);
     const heights = new Float32Array(enc.length);
     for (let i = 0; i < enc.length; i++) {
       heights[i] = enc[i] * manifest.heightScale + manifest.heightOffset;
     }
     const terrain = new Terrain(manifest, heights, forest);
+    terrain.customSceneData = customSceneData;
     await terrain.buildChunks(onProgress);
     return terrain;
   }
@@ -40,15 +54,31 @@ export class Terrain {
     const loader = new THREE.TextureLoader();
     let done = 0;
     const total = this.m.chunks.length;
-    const jobs = this.m.chunks.map((chunk) =>
-      loader.loadAsync(`data/tex/${chunk.cx}_${chunk.cy}.jpg`).then((tex) => {
+    const jobs = this.m.chunks.map((chunk) => {
+      let url;
+      let isBlob = false;
+      if (this.customSceneData && this.customSceneData.textures) {
+        const blob = this.customSceneData.textures[`${chunk.cx}_${chunk.cy}`];
+        if (blob) {
+          url = URL.createObjectURL(blob);
+          isBlob = true;
+        }
+      }
+      if (!url) {
+        url = `data/tex/${chunk.cx}_${chunk.cy}.jpg`;
+      }
+
+      return loader.loadAsync(url).then((tex) => {
+        if (isBlob) {
+          URL.revokeObjectURL(url);
+        }
         tex.colorSpace = THREE.SRGBColorSpace;
         tex.anisotropy = 8;
         const mesh = this.buildChunkMesh(chunk, tex);
         this.group.add(mesh);
         onProgress?.(++done, total);
-      })
-    );
+      });
+    });
     await Promise.all(jobs);
   }
 
@@ -221,9 +251,8 @@ export class Terrain {
 }
 
 // Decode the grayscale forest-density PNG into a flat Uint8Array.
-async function loadForestMask() {
+async function decodeForestMask(blob) {
   try {
-    const blob = await fetch('data/forest.png').then((r) => r.blob());
     const bmp = await createImageBitmap(blob);
     const canvas = document.createElement('canvas');
     canvas.width = bmp.width;
@@ -235,7 +264,8 @@ async function loadForestMask() {
     for (let i = 0; i < mask.length; i++) mask[i] = rgba[i * 4];
     bmp.close();
     return mask;
-  } catch {
+  } catch (err) {
+    console.error('Failed to decode forest mask:', err);
     return null; // trees just won't spawn
   }
 }

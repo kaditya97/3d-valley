@@ -3,18 +3,384 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>3D Valley</title>
+    <title>3D Earth Valley & Terrain Builder</title>
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+    <!-- Leaflet Map library -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <!-- JSZip for exporting to ZIP files -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
     <style>
+      :root {
+        --bg-main: #07090e;
+        --bg-panel: #0f131a;
+        --bg-panel-hover: #161c26;
+        --border-color: #222b38;
+        --accent: #3b82f6;
+        --accent-hover: #2563eb;
+        --text-primary: #f8fafc;
+        --text-secondary: #94a3b8;
+        --danger: #ef4444;
+        --success: #10b981;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
       html,
       body {
         margin: 0;
         height: 100%;
         overflow: hidden;
-        background: #0b0e14;
+        background: var(--bg-main);
+        color: var(--text-primary);
+        font-family: 'Plus Jakarta Sans', sans-serif;
       }
+
       canvas {
         display: block;
       }
+
+      /* Dashboard / Landing UI */
+      #dashboard {
+        position: fixed;
+        inset: 0;
+        z-index: 20;
+        background: radial-gradient(circle at top, #0f1624 0%, #07090e 100%);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 40px 20px;
+        overflow-y: auto;
+      }
+
+      #dashboard.hidden {
+        display: none !important;
+      }
+
+      .dashboard-container {
+        width: 100%;
+        max-width: 900px;
+        background: rgba(15, 19, 26, 0.75);
+        border: 1px solid var(--border-color);
+        border-radius: 24px;
+        padding: 40px;
+        backdrop-filter: blur(20px);
+        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+      }
+
+      .header {
+        text-align: center;
+        margin-bottom: 35px;
+      }
+
+      .header h1 {
+        font-size: 38px;
+        font-weight: 700;
+        margin: 0 0 10px 0;
+        letter-spacing: -0.5px;
+        background: linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+      }
+
+      .header p {
+        color: var(--text-secondary);
+        font-size: 16px;
+        margin: 0;
+      }
+
+      .dashboard-actions {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 30px;
+        gap: 15px;
+      }
+
+      .btn {
+        font-family: inherit;
+        font-size: 15px;
+        font-weight: 600;
+        padding: 12px 24px;
+        border-radius: 12px;
+        border: none;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      }
+
+      .btn-primary {
+        background: var(--accent);
+        color: #fff;
+      }
+
+      .btn-primary:hover {
+        background: var(--accent-hover);
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+      }
+
+      .btn-secondary {
+        background: var(--bg-panel-hover);
+        border: 1px solid var(--border-color);
+        color: var(--text-primary);
+      }
+
+      .btn-secondary:hover {
+        background: #1e293b;
+        border-color: #334155;
+      }
+
+      .btn-danger {
+        background: rgba(239, 68, 68, 0.15);
+        color: #f87171;
+        padding: 8px 14px;
+        font-size: 13px;
+        border: 1px solid rgba(239, 68, 68, 0.3);
+      }
+
+      .btn-danger:hover {
+        background: var(--danger);
+        color: #fff;
+      }
+
+      .scene-list {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 16px;
+        max-height: 400px;
+        overflow-y: auto;
+        padding-right: 8px;
+      }
+
+      .scene-card {
+        background: var(--bg-panel);
+        border: 1px solid var(--border-color);
+        border-radius: 16px;
+        padding: 20px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        transition: all 0.2s;
+      }
+
+      .scene-card:hover {
+        border-color: #334155;
+        background: var(--bg-panel-hover);
+      }
+
+      .scene-info {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .scene-title {
+        font-size: 18px;
+        font-weight: 600;
+        margin: 0;
+      }
+
+      .scene-meta {
+        font-size: 13px;
+        color: var(--text-secondary);
+        display: flex;
+        gap: 15px;
+      }
+
+      .scene-actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      /* Map Bounding Box Selector Modal */
+      #map-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 30;
+        background: rgba(7, 9, 14, 0.9);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+      }
+
+      #map-modal.hidden {
+        display: none !important;
+      }
+
+      .map-container {
+        width: 100%;
+        max-width: 1000px;
+        height: 85vh;
+        background: var(--bg-panel);
+        border: 1px solid var(--border-color);
+        border-radius: 24px;
+        display: flex;
+        overflow: hidden;
+        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+      }
+
+      .map-sidebar {
+        width: 320px;
+        padding: 30px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        border-right: 1px solid var(--border-color);
+      }
+
+      #map {
+        flex: 1;
+        height: 100%;
+        /* Premium dark mode filter for Leaflet OSM tiles */
+        filter: invert(92%) hue-rotate(180deg) brightness(90%) contrast(90%);
+      }
+
+      .form-group {
+        margin-bottom: 20px;
+      }
+
+      .form-group label {
+        display: block;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text-secondary);
+        margin-bottom: 8px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
+      .form-control {
+        width: 100%;
+        background: var(--bg-main);
+        border: 1px solid var(--border-color);
+        color: var(--text-primary);
+        border-radius: 10px;
+        padding: 12px;
+        font-family: inherit;
+        font-size: 14px;
+        transition: border-color 0.2s;
+      }
+
+      .form-control:focus {
+        outline: none;
+        border-color: var(--accent);
+      }
+
+      .search-box {
+        display: flex;
+        gap: 8px;
+      }
+
+      .search-box input {
+        flex: 1;
+      }
+
+      .map-sidebar-top h2 {
+        font-size: 22px;
+        margin: 0 0 8px 0;
+      }
+
+      .map-sidebar-top p {
+        color: var(--text-secondary);
+        font-size: 13px;
+        margin: 0 0 25px 0;
+        line-height: 1.5;
+      }
+
+      .map-stats {
+        background: var(--bg-main);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 20px;
+        font-size: 13px;
+        color: var(--text-secondary);
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .map-stats strong {
+        color: var(--text-primary);
+      }
+
+      .map-sidebar-buttons {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      /* Progress Overlay */
+      #progress-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 40;
+        background: rgba(7, 9, 14, 0.95);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 20px;
+      }
+
+      #progress-overlay.hidden {
+        display: none !important;
+      }
+
+      .progress-container {
+        width: 400px;
+        background: var(--bg-panel);
+        border: 1px solid var(--border-color);
+        padding: 30px;
+        border-radius: 20px;
+        text-align: center;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+      }
+
+      .progress-container h3 {
+        margin: 0 0 15px 0;
+        font-size: 18px;
+      }
+
+      .progress-bar-bg {
+        width: 100%;
+        height: 8px;
+        background: var(--bg-main);
+        border-radius: 99px;
+        overflow: hidden;
+        margin-bottom: 15px;
+      }
+
+      .progress-bar-fill {
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, #60a5fa, #3b82f6);
+        border-radius: 99px;
+        transition: width 0.3s;
+      }
+
+      #progress-detail {
+        color: var(--text-secondary);
+        font-size: 13px;
+        margin: 0;
+      }
+
+      /* 3D App overlay controls overlay menu */
       #overlay {
         position: fixed;
         inset: 0;
@@ -23,46 +389,58 @@
         align-items: center;
         justify-content: center;
         gap: 18px;
-        background: rgba(8, 11, 18, 0.78);
+        background: rgba(8, 11, 18, 0.88);
         color: #eef2f7;
-        font-family: -apple-system, system-ui, sans-serif;
+        font-family: inherit;
         cursor: pointer;
         user-select: none;
         z-index: 10;
         text-align: center;
+        backdrop-filter: blur(10px);
       }
+
       #overlay h1 {
         margin: 0;
-        font-size: 30px;
-        font-weight: 600;
-        letter-spacing: 0.5px;
+        font-size: 32px;
+        font-weight: 700;
+        letter-spacing: -0.5px;
       }
+
       #overlay.hidden {
         display: none;
       }
+
       #status {
         margin: 0;
         font-size: 14px;
         color: #9fb0c6;
       }
+
       #status.error {
         color: #ff9d8a;
       }
+
       .keys {
         display: grid;
         grid-template-columns: auto auto;
-        gap: 6px 16px;
+        gap: 8px 18px;
         font-size: 14px;
         color: #c9d4e3;
         text-align: left;
+        background: rgba(255,255,255,0.03);
+        padding: 24px;
+        border-radius: 16px;
+        border: 1px solid var(--border-color);
       }
+
       .keys b {
         color: #fff;
         font-weight: 600;
         text-align: right;
-        font-family: ui-monospace, Menlo, monospace;
+        font-family: 'JetBrains Mono', monospace;
         font-size: 13px;
       }
+
       kbd {
         display: inline-block;
         min-width: 14px;
@@ -71,46 +449,46 @@
         border: 1px solid #3c4b61;
         border-bottom-width: 2px;
         border-radius: 5px;
-        padding: 1px 6px;
-        font:
-          12px ui-monospace,
-          Menlo,
-          monospace;
+        padding: 2px 6px;
+        font: 12px 'JetBrains Mono', monospace;
       }
+
       #start {
-        margin-top: 6px;
+        margin-top: 10px;
         font-size: 16px;
         color: #fff;
-        background: #2563eb;
-        padding: 11px 30px;
+        background: var(--accent);
+        padding: 12px 36px;
         border-radius: 999px;
-        transition:
-          transform 0.1s,
-          opacity 0.2s;
+        transition: transform 0.1s, opacity 0.2s;
+        font-weight: 600;
       }
+
       #start.disabled {
         background: #2a3648;
         color: #8b99ad;
       }
+
       #overlay:hover #start:not(.disabled) {
         transform: scale(1.04);
       }
+
+      /* In-game HUD */
       #hud {
         position: fixed;
         left: 14px;
         bottom: 12px;
         z-index: 5;
         color: #e8eef6;
-        font:
-          12px/1.6 ui-monospace,
-          Menlo,
-          monospace;
-        background: rgba(10, 14, 20, 0.5);
-        padding: 6px 10px;
+        font: 12px/1.6 'JetBrains Mono', monospace;
+        background: rgba(10, 14, 20, 0.7);
+        padding: 8px 12px;
         border-radius: 8px;
+        border: 1px solid rgba(255,255,255,0.05);
         pointer-events: none;
         white-space: pre;
       }
+
       #hint {
         position: fixed;
         bottom: 12px;
@@ -118,15 +496,15 @@
         transform: translateX(-50%);
         z-index: 5;
         color: #dfe7f1;
-        font:
-          12px system-ui,
-          sans-serif;
-        background: rgba(10, 14, 20, 0.5);
-        padding: 6px 14px;
+        font-size: 12px;
+        background: rgba(10, 14, 20, 0.7);
+        padding: 8px 16px;
         border-radius: 999px;
+        border: 1px solid rgba(255,255,255,0.05);
         pointer-events: none;
         white-space: nowrap;
       }
+
       #toast {
         position: fixed;
         top: 18px;
@@ -134,69 +512,194 @@
         transform: translateX(-50%);
         z-index: 6;
         color: #fff;
-        font:
-          14px system-ui,
-          sans-serif;
-        background: rgba(10, 14, 20, 0.7);
-        padding: 9px 20px;
+        font-size: 14px;
+        background: rgba(10, 14, 20, 0.85);
+        padding: 10px 24px;
         border-radius: 999px;
+        border: 1px solid rgba(255,255,255,0.08);
         pointer-events: none;
         opacity: 0;
         transition: opacity 0.35s;
         white-space: nowrap;
       }
+
       #toast.show {
         opacity: 1;
       }
+
       #attr {
         position: fixed;
         right: 10px;
         bottom: 8px;
         z-index: 5;
-        color: rgba(232, 238, 246, 0.5);
-        font:
-          10px system-ui,
-          sans-serif;
+        color: rgba(232, 238, 246, 0.4);
+        font-size: 10px;
         pointer-events: none;
       }
+
+      #back-to-menu {
+        position: fixed;
+        top: 18px;
+        right: 18px;
+        z-index: 15;
+        background: rgba(15, 19, 26, 0.7);
+        border: 1px solid var(--border-color);
+        color: var(--text-primary);
+        font-family: inherit;
+        font-size: 13px;
+        font-weight: 600;
+        padding: 8px 16px;
+        border-radius: 8px;
+        cursor: pointer;
+        display: none;
+        backdrop-filter: blur(5px);
+        transition: all 0.2s;
+      }
+
+      #back-to-menu:hover {
+        background: var(--bg-panel-hover);
+        border-color: #334155;
+      }
+
       .playing #hud,
       .playing #hint {
         display: block;
       }
+
       #hud,
       #hint {
         display: none;
       }
+
+      /* Scrollbar Styling */
+      ::-webkit-scrollbar {
+        width: 8px;
+      }
+      ::-webkit-scrollbar-track {
+        background: var(--bg-main);
+      }
+      ::-webkit-scrollbar-thumb {
+        background: var(--border-color);
+        border-radius: 4px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: #334155;
+      }
     </style>
   </head>
   <body>
-    <div id="overlay">
-      <h1>3D Valley</h1>
+    <!-- 1. Main Dashboard View -->
+    <div id="dashboard">
+      <div class="dashboard-container">
+        <div class="header">
+          <h1>3D Earth Valley & Terrain Builder</h1>
+          <p>Generate and explore stunning 3D environments from real elevation and satellite data</p>
+        </div>
+
+        <div class="dashboard-actions">
+          <button class="btn btn-primary" id="btn-create-scene">
+            <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"></path></svg>
+            Build New Scene
+          </button>
+          
+          <div style="display: flex; gap: 10px;">
+            <button class="btn btn-secondary" id="btn-import-scene">
+              Import Scene (.zip)
+            </button>
+            <input type="file" id="file-import" accept=".zip" style="display: none;" />
+          </div>
+        </div>
+
+        <div class="scene-list" id="scene-list">
+          <!-- Loaded scenes will appear here -->
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. Interactive Map Selector -->
+    <div id="map-modal" class="hidden">
+      <div class="map-container">
+        <div class="map-sidebar">
+          <div class="map-sidebar-top">
+            <h2>Select Area</h2>
+            <p>Pan, zoom, and adjust the blue box to select the area you wish to build in 3D.</p>
+
+            <div class="form-group">
+              <label>Search Location</label>
+              <div class="search-box">
+                <input type="text" class="form-control" id="search-input" placeholder="e.g., Mount Fuji, Grand Canyon..." />
+                <button class="btn btn-secondary" id="btn-search" style="padding: 10px 14px;">
+                  Go
+                </button>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label>Scene Name</label>
+              <input type="text" class="form-control" id="scene-name-input" placeholder="e.g., My Valley" value="My Valley" />
+            </div>
+
+            <div class="map-stats">
+              <div>Width: <span id="stat-w">0.0 km</span></div>
+              <div>Height: <span id="stat-h">0.0 km</span></div>
+              <div>Status: <span id="stat-status">Select an area</span></div>
+            </div>
+          </div>
+
+          <div class="map-sidebar-buttons">
+            <button class="btn btn-primary" id="btn-generate-scene" style="justify-content: center; width: 100%;">
+              Generate 3D Scene
+            </button>
+            <button class="btn btn-secondary" id="btn-cancel-map" style="justify-content: center; width: 100%;">
+              Cancel
+            </button>
+          </div>
+        </div>
+
+        <div id="map"></div>
+      </div>
+    </div>
+
+    <!-- 3. Progress Overlay -->
+    <div id="progress-overlay" class="hidden">
+      <div class="progress-container">
+        <h3 id="progress-title">Building 3D Scene</h3>
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill" id="progress-bar-fill"></div>
+        </div>
+        <p id="progress-detail">Downloading terrain elevation...</p>
+      </div>
+    </div>
+
+    <!-- 4. WebGL Overlay Controls Menu -->
+    <div id="overlay" class="hidden">
+      <h1 id="overlay-title">Yosemite Valley</h1>
       <p id="status">Loading terrain…</p>
       <div class="keys">
         <b>Mouse</b><span>look around</span>
-        <b><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></b
-        ><span>move (arrow keys work too)</span>
-        <b><kbd>Space</kbd> / <kbd>C</kbd></b
-        ><span>up / down while flying</span> <b><kbd>Shift</kbd></b
-        ><span>go faster</span> <b><kbd>Scroll</kbd></b
-        ><span>change fly speed</span> <b><kbd>F</kbd></b
-        ><span>switch between flying and walking</span>
-        <b><kbd>L</kbd> / <kbd>1</kbd>–<kbd>5</kbd></b
-        ><span>time of day (dawn → night)</span> <b><kbd>R</kbd></b
-        ><span>weather (clear → clouds → rain → snow)</span> <b><kbd>M</kbd></b
-        ><span>sound on / off</span> <b><kbd>Esc</kbd></b
-        ><span>back to this menu</span>
+        <b><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></b><span>move (arrow keys work too)</span>
+        <b><kbd>Space</kbd> / <kbd>C</kbd></b><span>up / down while flying</span> 
+        <b><kbd>Shift</kbd></b><span>go faster</span> 
+        <b><kbd>Scroll</kbd></b><span>change fly speed</span> 
+        <b><kbd>F</kbd></b><span>switch between flying and walking</span>
+        <b><kbd>L</kbd> / <kbd>1</kbd>–<kbd>5</kbd></b><span>time of day (dawn → night)</span> 
+        <b><kbd>R</kbd></b><span>weather (clear → clouds → rain → snow)</span> 
+        <b><kbd>M</kbd></b><span>sound on / off</span> 
+        <b><kbd>Esc</kbd></b><span>back to menu</span>
       </div>
       <div id="start" class="disabled">Loading…</div>
     </div>
+
+    <!-- Navigation / Exit to Dashboard -->
+    <button id="back-to-menu">Back to Dashboard</button>
+
     <div id="hud"></div>
     <div id="hint"></div>
     <div id="toast"></div>
     <div id="attr">
-      Elevation: Mapzen/AWS Terrain Tiles · Imagery: Esri World Imagery · Roads
-      &amp; buildings: © OpenStreetMap
+      Elevation: AWS Terrain Tiles · Imagery: Esri World Imagery · Roads &amp; buildings: © OpenStreetMap
     </div>
+
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>
