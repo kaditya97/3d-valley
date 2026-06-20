@@ -215,13 +215,14 @@ export async function downloadScene(bbox, name, onProgress) {
 
   // 4. Download OpenStreetMap features (Overpass API)
   onProgress('Fetching OpenStreetMap features...', 80);
-  let osmData = { roads: [], buildings: [] };
+  let osmData = { roads: [], buildings: [], waterways: [] };
 
   const query = `
     [out:json][timeout:45];
     (
       way["highway"~"^(primary|secondary|tertiary|unclassified|residential)$"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
       way["building"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
+      way["waterway"~"^(river|stream)$"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
     );
     out geom tags;
   `;
@@ -238,6 +239,7 @@ export async function downloadScene(bbox, name, onProgress) {
       
       const r6 = (v) => Math.round(v * 1e6) / 1e6;
       const rawRoads = [];
+      const rawWaterways = [];
       const buildings = [];
 
       for (const el of osmJson.elements) {
@@ -252,41 +254,50 @@ export async function downloadScene(bbox, name, onProgress) {
           if (tags.tunnel || tags.covered === 'yes') continue;
           if (pts.length < 2) continue;
           rawRoads.push({ name: tags.name || tags.ref || '', type: tags.highway, pts });
+        } else if (tags.waterway) {
+          if (pts.length < 2) continue;
+          rawWaterways.push({ name: tags.name || '', type: tags.waterway, pts });
         }
       }
 
       // Chain ways
-      const close = (a, b) => Math.abs(a[0] - b[0]) < 2e-5 && Math.abs(a[1] - b[1]) < 2e-5;
-      const groups = new Map();
-      for (const r of rawRoads) {
-        const key = `${r.name}|${r.type}`;
-        (groups.get(key) ?? groups.set(key, []).get(key)).push(r);
-      }
-      const roads = [];
-      for (const [key, ways] of groups) {
-        const [roadName, roadType] = key.split('|');
-        const pool = ways.map((w) => w.pts.slice());
-        while (pool.length) {
-          let chain = pool.pop();
-          let grew = true;
-          while (grew) {
-            grew = false;
-            for (let i = 0; i < pool.length; i++) {
-              const c = pool[i];
-              if (close(chain[chain.length - 1], c[0])) chain = chain.concat(c.slice(1));
-              else if (close(chain[chain.length - 1], c[c.length - 1])) chain = chain.concat(c.slice(0, -1).reverse());
-              else if (close(chain[0], c[c.length - 1])) chain = c.slice(0, -1).concat(chain);
-              else if (close(chain[0], c[0])) chain = c.slice(1).reverse().concat(chain);
-              else continue;
-              pool.splice(i, 1);
-              grew = true;
-              break;
-            }
-          }
-          roads.push({ name: roadName, type: roadType, pts: chain });
+      const chainWays = (rawWays) => {
+        const close = (a, b) => Math.abs(a[0] - b[0]) < 2e-5 && Math.abs(a[1] - b[1]) < 2e-5;
+        const groups = new Map();
+        for (const r of rawWays) {
+          const key = `${r.name}|${r.type}`;
+          (groups.get(key) ?? groups.set(key, []).get(key)).push(r);
         }
-      }
-      osmData = { roads, buildings };
+        const chains = [];
+        for (const [key, ways] of groups) {
+          const [name, type] = key.split('|');
+          const pool = ways.map((w) => w.pts.slice());
+          while (pool.length) {
+            let chain = pool.pop();
+            let grew = true;
+            while (grew) {
+              grew = false;
+              for (let i = 0; i < pool.length; i++) {
+                const c = pool[i];
+                if (close(chain[chain.length - 1], c[0])) chain = chain.concat(c.slice(1));
+                else if (close(chain[chain.length - 1], c[c.length - 1])) chain = chain.concat(c.slice(0, -1).reverse());
+                else if (close(chain[0], c[c.length - 1])) chain = c.slice(0, -1).concat(chain);
+                else if (close(chain[0], c[0])) chain = c.slice(1).reverse().concat(chain);
+                else continue;
+                pool.splice(i, 1);
+                grew = true;
+                break;
+              }
+            }
+            chains.push({ name, type, pts: chain });
+          }
+        }
+        return chains;
+      };
+
+      const roads = chainWays(rawRoads);
+      const waterways = chainWays(rawWaterways);
+      osmData = { roads, buildings, waterways };
       break; // Success!
     } catch (err) {
       console.warn(`Overpass endpoint failed: ${endpoint}`, err);

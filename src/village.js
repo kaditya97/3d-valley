@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { attachAtmo } from './atmosphere.js';
+import { attachAtmo, ATMO, ATMO_FOG_PARS } from './atmosphere.js';
 
 // The human layer, from real OpenStreetMap data (tools/fetch-osm.mjs):
 //   · road centerlines draped over the DEM as asphalt ribbons — they overlay
@@ -22,6 +22,8 @@ export class Village {
     this.group = new THREE.Group();
     scene.add(this.group);
     this.tint = new THREE.Color(1, 1, 1);
+    this.time = { value: 0 };
+    this.shaderTint = { value: new THREE.Color(1, 1, 1) };
     this.materials = [];   // [{ mat, base }] tinted by the lighting presets
     this.cars = [];
     this.carPaths = [];
@@ -41,6 +43,9 @@ export class Village {
     if (!data) return;
     this.buildRoads(data.roads);
     this.buildBuildings(data.buildings);
+    if (data.waterways) {
+      this.buildRivers(data.waterways);
+    }
     this.buildCars();
     this.setTint(this.tint);
     this.ready = true;
@@ -48,7 +53,7 @@ export class Village {
 
   // Convert a lon/lat polyline to draped in-bounds world runs, resampled so
   // ribbons follow the terrain between OSM nodes.
-  drapedRuns(pts, keepEvery = SAMPLE) {
+  drapedRuns(pts, keepEvery = SAMPLE, lift = ROAD_LIFT) {
     const t = this.terrain;
     const inB = (p) => Math.abs(p.x) < t.halfW - 260 && Math.abs(p.z) < t.halfH - 260;
     const runs = [];
@@ -68,13 +73,13 @@ export class Village {
       run.push(p);
       prev = p;
     }
-    for (const r of runs) for (const p of r) p.y = t.heightAt(p.x, p.z) + ROAD_LIFT;
+    for (const r of runs) for (const p of r) p.y = t.heightAt(p.x, p.z) + lift;
     return runs.filter((r) => r.length >= 3);
   }
 
   buildRoads(roads) {
     const positions = [];
-    const colors = [];
+    const uvs = [];
     const index = [];
     const dir = new THREE.Vector2();
     this.carPathCandidates = [];
@@ -84,7 +89,12 @@ export class Village {
       const width = ROAD_WIDTH[road.type] ?? 5.5;
       for (const run of this.drapedRuns(road.pts)) {
         let length = 0;
-        for (let i = 1; i < run.length; i++) length += run[i].distanceTo(run[i - 1]);
+        const dists = [0];
+        for (let i = 1; i < run.length; i++) {
+          const d = run[i].distanceTo(run[i - 1]);
+          length += d;
+          dists.push(length);
+        }
         if (length > 1500 && (road.type === 'primary' || road.type === 'secondary' || road.type === 'tertiary')) {
           this.carPathCandidates.push({ name: road.name, run, length });
         }
@@ -101,8 +111,12 @@ export class Village {
           const yR = p.y * 0.4 + (hR + ROAD_LIFT) * 0.6;
           positions.push(p.x + px * width * 0.5, yL, p.z + pz * width * 0.5);
           positions.push(p.x - px * width * 0.5, yR, p.z - pz * width * 0.5);
-          const v = 0.93 + ((i * 2654435761) % 100) / 100 * 0.14; // asphalt tone jitter
-          colors.push(v, v, v, v, v, v);
+
+          // UV coordinates: U goes 0 -> 1 across the road width, V goes along road length
+          const v = dists[i] / 9.0; // repeat pattern every 9 meters
+          uvs.push(0, v);
+          uvs.push(1, v);
+
           if (i > 0) {
             const k = base + i * 2;
             index.push(k - 2, k - 1, k, k - 1, k + 1, k);
@@ -113,17 +127,77 @@ export class Village {
     if (!positions.length) return;
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3));
-    geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(colors), 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(uvs), 2));
     geo.setIndex(positions.length / 3 > 65000 ? new THREE.BufferAttribute(new Uint32Array(index), 1) : index);
-    const mat = new THREE.MeshBasicMaterial({
-      vertexColors: true,
+
+    // ShaderMaterial for styled, atmospheric roads
+    const mat = new THREE.ShaderMaterial({
+      side: THREE.DoubleSide,
       polygonOffset: true,
       polygonOffsetFactor: -2,
       polygonOffsetUnits: -4,
+      uniforms: {
+        uTint: this.shaderTint,
+        ...ATMO.uniforms,
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        varying vec3 vWorld;
+        void main() {
+          vUv = uv;
+          vWorld = (modelMatrix * vec4(position, 1.0)).xyz;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 uTint;
+        uniform vec3 uAtmoFogColor;
+        varying vec2 vUv;
+        varying vec3 vWorld;
+        
+        ${ATMO_FOG_PARS}
+
+        float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+        float noise(vec2 p) {
+          vec2 i = floor(p), f = fract(p);
+          f = f * f * (3.0 - 2.0 * f);
+          return mix(mix(hash(i), hash(i + vec2(1, 0)), f.x),
+                     mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), f.x), f.y);
+        }
+
+        void main() {
+          // 1. Base asphalt color with subtle noise for texture/grit
+          float n = noise(vWorld.xz * 3.5) * 0.12 + noise(vWorld.xz * 12.0) * 0.05;
+          vec3 asphalt = vec3(0.20 + n, 0.21 + n, 0.22 + n);
+
+          // 2. Yellow dashed centerline
+          float distToCenter = abs(vUv.x - 0.5);
+          float centerLineWidth = 0.015; // relative to road width
+          float centerLineAlpha = smoothstep(centerLineWidth + 0.005, centerLineWidth, distToCenter);
+          // Dash pattern: repeat V, 55% dash, 45% gap
+          float dash = step(0.45, fract(vUv.y));
+          vec3 yellowLineColor = vec3(0.85, 0.65, 0.15); // highway yellow
+
+          // 3. White solid edge lines
+          float edgeDist = min(vUv.x, 1.0 - vUv.x);
+          float edgeLineWidth = 0.012;
+          float edgeLineAlpha = smoothstep(edgeLineWidth + 0.006, edgeLineWidth, abs(edgeDist - 0.04));
+          vec3 whiteLineColor = vec3(0.82, 0.82, 0.82);
+
+          // 4. Mix road features
+          vec3 roadCol = asphalt;
+          roadCol = mix(roadCol, yellowLineColor, centerLineAlpha * dash);
+          roadCol = mix(roadCol, whiteLineColor, edgeLineAlpha);
+
+          // 5. Atmospheric fog
+          vec3 col = atmoApply(roadCol * uTint, uAtmoFogColor, vWorld, cameraPosition);
+
+          gl_FragColor = vec4(col, 1.0);
+        }
+      `
     });
+
     mat.toneMapped = false;
-    attachAtmo(mat);
-    this.materials.push({ mat, base: new THREE.Color(0x3d3e41) });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.frustumCulled = false;
     this.group.add(mesh);
@@ -230,6 +304,135 @@ export class Village {
     this.group.add(windows);
   }
 
+  buildRivers(waterways) {
+    if (!waterways) return;
+    const positions = [];
+    const uvs = [];
+    const index = [];
+    const dir = new THREE.Vector2();
+
+    const RIVER_WIDTH = { river: 18.0, stream: 4.5, canal: 6.0 };
+    const RIVER_LIFT = 0.15;
+
+    for (const way of waterways) {
+      const width = RIVER_WIDTH[way.type] ?? 6.0;
+      const runs = this.drapedRuns(way.pts, SAMPLE, RIVER_LIFT);
+      for (const run of runs) {
+        let cumDist = 0;
+        const dists = [0];
+        for (let i = 1; i < run.length; i++) {
+          cumDist += run[i].distanceTo(run[i - 1]);
+          dists.push(cumDist);
+        }
+
+        const base = positions.length / 3;
+        for (let i = 0; i < run.length; i++) {
+          const p = run[i];
+          const a = run[Math.max(0, i - 1)], b = run[Math.min(run.length - 1, i + 1)];
+          dir.set(b.x - a.x, b.z - a.z).normalize();
+          const px = -dir.y, pz = dir.x; // perpendicular in xz
+          
+          const hL = this.terrain.heightAt(p.x + px * width * 0.5, p.z + pz * width * 0.5);
+          const hR = this.terrain.heightAt(p.x - px * width * 0.5, p.z - pz * width * 0.5);
+          
+          const yL = p.y * 0.4 + (hL + RIVER_LIFT) * 0.6;
+          const yR = p.y * 0.4 + (hR + RIVER_LIFT) * 0.6;
+
+          positions.push(p.x + px * width * 0.5, yL, p.z + pz * width * 0.5);
+          positions.push(p.x - px * width * 0.5, yR, p.z - pz * width * 0.5);
+
+          // UV coordinates: U goes 0 -> 1, V is cumulative distance along the river
+          const v = dists[i] / 30.0;
+          uvs.push(0, v);
+          uvs.push(1, v);
+
+          if (i > 0) {
+            const k = base + i * 2;
+            index.push(k - 2, k - 1, k, k - 1, k + 1, k);
+          }
+        }
+      }
+    }
+
+    if (!positions.length) return;
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(uvs), 2));
+    geo.setIndex(positions.length / 3 > 65000 ? new THREE.BufferAttribute(new Uint32Array(index), 1) : index);
+
+    // ShaderMaterial for flowing water
+    const mat = new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      polygonOffset: true,
+      polygonOffsetFactor: -1.5,
+      polygonOffsetUnits: -3,
+      uniforms: {
+        uTime: this.time,
+        uTint: this.shaderTint,
+        ...ATMO.uniforms,
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        varying vec3 vWorld;
+        void main() {
+          vUv = uv;
+          vWorld = (modelMatrix * vec4(position, 1.0)).xyz;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform float uTime;
+        uniform vec3 uTint;
+        uniform vec3 uAtmoFogColor;
+        varying vec2 vUv;
+        varying vec3 vWorld;
+        
+        ${ATMO_FOG_PARS}
+
+        float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+        float noise(vec2 p) {
+          vec2 i = floor(p), f = fract(p);
+          f = f * f * (3.0 - 2.0 * f);
+          return mix(mix(hash(i), hash(i + vec2(1, 0)), f.x),
+                     mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), f.x), f.y);
+        }
+
+        void main() {
+          // Flow animation along river length (vUv.y)
+          float flow = vUv.y * 3.5 - uTime * 0.95;
+          vec2 p = vec2(vUv.x * 3.5, flow);
+          float ripple = noise(p) * 0.55 + noise(p * vec2(2.1, 1.6) + 3.1) * 0.35 + noise(p * vec2(4.5, 2.5) + 7.7) * 0.1;
+          ripple = smoothstep(0.18, 0.78, ripple);
+
+          // Deep river water color mixed with lighter rippling water
+          vec3 waterCol = mix(vec3(0.08, 0.22, 0.35), vec3(0.18, 0.40, 0.55), ripple * 0.45);
+
+          // Foam on the edges
+          float edge = sin(vUv.x * 3.14159);
+          float foam = smoothstep(0.28, 0.0, edge) * 0.35;
+          waterCol = mix(waterCol, vec3(0.9, 0.95, 1.0), foam * (0.35 + 0.65 * noise(vec2(vUv.x * 8.0, flow * 1.8))));
+
+          // Apply atmospheric fog
+          vec3 col = atmoApply(waterCol * uTint, uAtmoFogColor, vWorld, cameraPosition);
+          
+          // River is semi-transparent, showing the satellite texture underneath
+          float alpha = 0.72 + 0.20 * ripple;
+          gl_FragColor = vec4(col, alpha);
+        }
+      `
+    });
+
+    mat.toneMapped = false;
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.renderOrder = 2;
+    this.group.add(mesh);
+    this.riverMesh = mesh;
+    this.riverMat = mat;
+  }
+
   buildCars() {
     const paths = (this.carPathCandidates ?? []).sort((a, b) => b.length - a.length).slice(0, 7);
     this.carPathCandidates = null;
@@ -321,11 +524,13 @@ export class Village {
 
   setTint(color) {
     this.tint.copy(color);
+    this.shaderTint.value.copy(color);
     for (const { mat, base } of this.materials) mat.color.copy(base).multiply(color);
   }
 
   update(dt, night, snow = 0) {
     if (!this.ready) return;
+    this.time.value += dt;
     if (this.windowMat) this.windowMat.opacity = Math.min(1, night * 1.3) * 0.9;
     if (!this.cars.length) return;
 
